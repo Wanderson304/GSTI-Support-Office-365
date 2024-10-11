@@ -62,4 +62,5 @@ $InactiveUsers
 #Export Data to CSV
 $InactiveUsers | Export-Csv -Path $CSVPath -NoTypeInformation
 
-## Crédito do script [João Paulo Turbino](https://www.linkedin.com/in/jo%C3%A3o-paulo-tur%C3%ADbio-ximendes-21a166255/) 
+## Crédito do script João Paulo Turbino
+## https://www.linkedin.com/in/jo%C3%A3o-paulo-tur%C3%ADbio-ximendes-21a166255/ 
