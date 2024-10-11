@@ -1,0 +1,65 @@
+#Config Parameters
+$InactiveDays = 30 # Past number of days user didn't login
+$CSVPath = "C:\Temp\InactiveUsers.csv"
+$InactiveUsers = @()
+$ThresholdDate = (Get-Date).AddDays(-$InactiveDays)
+$QueryStartDateTimeFilter = "{0:yyyy-MM-dd}T{0:HH:mm:sszzz}" -f $ThresholdDate
+ 
+#Connect to Azure AD
+Connect-AzureAD | Out-Null
+ 
+#Get All users from Azure AD
+$AllUsers = Get-AzureADUser -All $true
+$TotalUsers = $AllUsers.Count
+ 
+#Function to get the last login date time stamp of the user
+Function Get-UserLastLogin([string] $UserObjectID)
+{
+    Try {
+        Write-host -f Yellow "Collecting Last Login date of User Object:"$UserObjectID
+ 
+        #Get Signin Logs of the user on specific time frame
+        $SigninLog = Get-AzureADAuditSignInLogs -All:$true -Filter "userID eq '$UserObjectID' and status/errorCode eq 0 and createdDateTime ge $QueryStartDateTimeFilter" | Select -First 1
+ 
+        #Return Last Login Date
+        Return $SigninLog.CreatedDateTime
+    }
+    Catch {
+        $message = $_
+        If ($message -like "*Too Many Requests*")
+        {
+            Write-host "`tSleeping for 10 seconds due to throttling limitations..." -ForegroundColor Cyan 
+            Sleep 10
+            #Recursive function call to retry the entry that was throttled
+            Get-UserLastLogin $UserObjectID
+        }
+        Else
+        {
+            Write-host $Message -ForegroundColor Red           
+        }
+    }
+}
+ 
+$Counter = 1
+$AllUsers | ForEach-Object {
+    Write-Progress -Activity "Checking Signin Logs:" -Status "Processing $($_.UserPrincipalName) ($Counter of $TotalUsers)" -PercentComplete (($Counter / $TotalUsers) * 100) 
+    #Call the function to get sign-in log
+    $LastLoginDate = Get-UserLastLogin $_.ObjectID
+     
+    #Collect data
+    If(!$LastLoginDate -or ($LastLoginDate -and ((Get-Date $LastLoginDate) -lt $ThresholdDate)))
+    {
+        $InactiveUsers += [PSCustomObject][ordered]@{
+            UserLoginName   = $_.UserPrincipalName
+            UserDisplayName   = $_.DisplayName
+        }
+    }
+    $Counter++
+}
+ 
+$InactiveUsers
+ 
+#Export Data to CSV
+$InactiveUsers | Export-Csv -Path $CSVPath -NoTypeInformation
+
+## Crédito do script [João Paulo Turbino](https://www.linkedin.com/in/jo%C3%A3o-paulo-tur%C3%ADbio-ximendes-21a166255/) 
