@@ -76,4 +76,4 @@ finally {
 }
 
 
-start C:\Windows\system32\AppCredentialExpirations_20250611_110501.csv
+#start C:\Windows\system32\AppCredentialExpirations_20250611_110501.csv
