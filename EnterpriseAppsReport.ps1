@@ -6,184 +6,89 @@ Version:        1.0
 
 ============================================================================================
 #>
-Param
-(
-    [switch]$CreateSession,
-    [string]$TenantId,
-    [string]$ClientId,
-    [string]$CertificateThumbprint,
-    [switch]$SigninEnabledAppsOnly,
-    [Switch]$SigninDisabledAppsOnly,
-    [Switch]$HiddenApps,
-    [Switch]$VisibleToAllUsers,
-    [Switch]$AccessScopeToAllUsers,
-    [Switch]$RoleAssignmentRequiredApps,
-    [Switch]$OwnerlessApps,
-    [Switch]$HomeTenantAppsOnly,
-    [Switch]$ExternalTenantAppsOnly
+
+Get-InstalledModule Microsoft.Graph
+Get-InstalledModule
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+
+Install-Module Microsoft.Graph -Scope CurrentUser -Repository PSGallery -Force
+Install-Module Microsoft.Graph.Beta -Repository PSGallery -Force
+
+<#
+.SYNOPSIS
+    Exporta um relatório CSV com as datas de expiração das chaves (client secrets e certificados) dos aplicativos registrados no Entra ID (Azure AD) via Microsoft Graph.
+
+.DESCRIPTION
+    Este script usa o módulo Microsoft.Graph para listar todos os aplicativos (Azure AD Apps),
+    extrair informações sobre secrets (passwordCredentials) e certificados (keyCredentials),
+    e exportar um relatório contendo nome do app, AppId, tipo de credencial e data de expiração.
+
+.NOTES
+    Pré-requisitos:
+      - Microsoft.Graph instalado (Install-Module Microsoft.Graph -Scope CurrentUser)
+      - Permissões: Application.Read.All
+      - Concessão de consentimento de administrador pode ser necessário.
+#>
+
+param (
+    [string]$OutputPath = (Join-Path -Path (Get-Location) -ChildPath ("AppCredentialExpirations_{0}.csv" -f (Get-Date -Format "yyyyMMdd_HHmmss")))
 )
-Function Connect_MgGraph
-{
- #Check for module installation
- $Module=Get-Module -Name Microsoft.Graph -ListAvailable
- if($Module.count -eq 0) 
- { 
-  Write-Host Microsoft Graph PowerShell SDK is not available  -ForegroundColor yellow  
-  $Confirm= Read-Host Are you sure you want to install module? [Y] Yes [N] No 
-  if($Confirm -match "[yY]") 
-  { 
-   Write-host "Installing Microsoft Graph PowerShell module..."
-   Install-Module Microsoft.Graph -Repository PSGallery -Scope CurrentUser -AllowClobber -Force
-  }
-  else
-  {
-   Write-Host "Microsoft Graph PowerShell module is required to run this script. Please install module using Install-Module Microsoft.Graph cmdlet." 
-   Exit
-  }
- }
- #Disconnect Existing MgGraph session
- if($CreateSession.IsPresent)
- {
-  Disconnect-MgGraph
- }
 
+try {
+    if (-not (Get-Module -ListAvailable -Name Microsoft.Graph)) {
+        Install-Module Microsoft.Graph -Scope CurrentUser -Force
+    }
+    Import-Module Microsoft.Graph -ErrorAction Stop
 
- Write-Host Connecting to Microsoft Graph...
- if(($TenantId -ne "") -and ($ClientId -ne "") -and ($CertificateThumbprint -ne ""))  
- {  
-  Connect-MgGraph  -TenantId $TenantId -AppId $ClientId -CertificateThumbprint $CertificateThumbprint -NoWelcome
- }
- else
- {
-  Connect-MgGraph -Scopes "Application.Read.All"  -NoWelcome
- }
+    $Scopes = @("Application.Read.All")
+    Write-Host "Autenticando no Microsoft Graph..."
+    Connect-MgGraph -Scopes $Scopes -ErrorAction Stop
+
+    Write-Host "Coletando aplicativos registrados..."
+    $apps = Get-MgApplication -All
+
+    $results = @()
+
+    foreach ($app in $apps) {
+        # Secrets (Client Secrets)
+        foreach ($secret in $app.PasswordCredentials) {
+            $results += [PSCustomObject]@{
+                AppDisplayName = $app.DisplayName
+                AppId          = $app.AppId
+                CredentialType = "Client Secret"
+                KeyId          = $secret.KeyId
+                EndDateTime    = $secret.EndDateTime
+                StartDateTime  = $secret.StartDateTime
+                Hint           = $secret.Hint
+            }
+        }
+
+        # Certificados (Key Credentials)
+        foreach ($key in $app.KeyCredentials) {
+            $results += [PSCustomObject]@{
+                AppDisplayName = $app.DisplayName
+                AppId          = $app.AppId
+                CredentialType = "Certificate"
+                KeyId          = $key.KeyId
+                EndDateTime    = $key.EndDateTime
+                StartDateTime  = $key.StartDateTime
+                Hint           = $key.DisplayName
+            }
+        }
+    }
+
+    Write-Host ("Exportando relatório para '{0}'..." -f $OutputPath)
+    $results | Sort-Object EndDateTime | Export-Csv -Path $OutputPath -NoTypeInformation -Encoding UTF8
+
+    Write-Host "✅ Relatório exportado com sucesso."
 }
-Connect_MgGraph
-
-$Location=Get-Location
-$ExportCSV = "$Location\EnterpriseApps_and_their_Owners_Report_$((Get-Date -format yyyy-MMM-dd-ddd` hh-mm-ss` tt).ToString()).csv"
-$PrintedCount=0
-$Count=0
-$TenantGUID= (Get-MgOrganization).Id
-
-
-$RequiredProperties=@('DisplayName','AccountEnabled','Id','SigninAudience','Tags','AppRoleAssignmentRequired','ServicePrincipalType','AdditionalProperties','AppDisplayName')
-Get-MgServicePrincipal -All | foreach {
- $Print=1
- $Count++
- $EnterpriseAppName=$_.DisplayName
- Write-Progress -Activity "`n     Processed enterprise apps: $Count - $EnterpriseAppName "
- $UserSigninStatus=$_.AccountEnabled
- $Id=$_.Id
- $Tags=$_.Tags
- if($Tags -contains "HideApp")
- {
-  $UserVisibility="Hidden"
- }
- else
- {
-  $UserVisibility="Visible"
- }
- $IsRoleAssignmentRequired=$_.AppRoleAssignmentRequired
- if($IsRoleAssignmentRequired -eq $true)
- {
-  $AccessScope="Only assigned users can access"
- }
- else
- {
-  $AccessScope="All users can access"
- }
- [DateTime]$CreationTime=($_.AdditionalProperties.createdDateTime)
- $CreationTime=$CreationTime.ToLocalTime()
- $ServicePrincipalType=$_.ServicePrincipalType
- $AppRegistrationName=$_.AppDisplayName
- $AppOwnerOrgId=$_.AppOwnerOrganizationId
- if($AppOwnerOrgId -eq $TenantGUID)
- {
-  $AppOrigin="Home tenant"
- }
- else
- {
-  $AppOrigin="External tenant"
- }
- $Owners=(Get-MgServicePrincipalOwner -ServicePrincipalId $Id).AdditionalProperties.userPrincipalName
- $Owners=$Owners -join ","
- if($owners -eq "")
- {
-  $Owners="-"
- }
-
- #Filtering the result
- if(($SigninEnabledAppsOnly.IsPresent) -and ($UserSigninStatus -eq $false))
- {
-  $Print=0
- }
- elseif(($SigninDisabledAppsOnly.IsPresent) -and ($UserSigninStatus -eq $true))
- {
-  $Print=0
- }
- if(($HiddenApps.IsPresent) -and ($UserVisibility -eq "Visible"))
- {
-  $Print=0
- }
- elseif(($VisibleToAllUsers.IsPresent) -and ($UserVisibility -eq "Hidden"))
- {
-  $Print=0
- }
- if(($AccessScopeToAllUsers.IsPresent) -and ($AccessScope -eq "Only assigned users can access"))
- {
-  $Print=0
- }
- elseif(($RoleAssignmentRequiredApps.IsPresent) -and ($AccessScope -eq "All users can access"))
- {
-  $Print=0
- }
- if(($OwnerlessApps.IsPresent) -and ($Owners -ne "-"))
- {
-  $Print=0
- }
- if(($HomeTenantAppsOnly.IsPresent) -and ($AppOrigin -eq "External tenant"))
- {
-  $Print=0
- }
- elseif(($ExternalTenantAppsOnly.IsPresent) -and ($AppOrigin -eq "Home tenant"))
- {
-  $Print=0
- }
-
- if($Print -eq 1)
-   {
-   $PrintedCount++
-   $ExportResult=[PSCustomObject]@{'Enterprise App Name'=$EnterpriseAppName;'App Id'=$Id;'App Owners'=$Owners;'App Creation Time'=$CreationTime;'User Signin Allowed'=$UserSigninStatus;'User Visibility'=$UserVisibility;'Role Assignment Required'=$AccessScope;'Service Principal Type'=$ServicePrincipalType;'App Registration Name'=$AppRegistrationName;'App Origin'=$AppOrigin;'App Org Id'=$AppOwnerOrgId}
-   $ExportResult | Export-Csv -Path $ExportCSV -Notype -Append
-  }
+catch {
+    Write-Error ("❌ Ocorreu um erro: {0}" -f $_.Exception.Message)
+}
+finally {
+    Disconnect-MgGraph | Out-Null
 }
 
- Write-Host `n~~ Script prepared by AdminDroid Community ~~`n -ForegroundColor Green
- Write-Host "~~ Check out " -NoNewline -ForegroundColor Green; Write-Host "admindroid.com" -ForegroundColor Yellow -NoNewline; Write-Host " to get access to 1800+ Microsoft 365 reports. ~~" -ForegroundColor Green `n`n
- 
+#cd "D:\PowerShell\01 - Labs\02 - Chaves de App"
 
-
-#Open output file after execution 
- If($PrintedCount -eq 0)
- {
-  Write-Host No data found for the given criteria
- 
- }
- else
- {
-  Write-Host `nThe script processed $Count enterprise apps and the output file contains $PrintedCount records.
-  if((Test-Path -Path $ExportCSV) -eq "True") 
-  {
-
-   Write-Host `n The Output file available in: -NoNewline -ForegroundColor Yellow
-   Write-Host $ExportCSV 
-   $Prompt = New-Object -ComObject wscript.shell      
-  $UserInput = $Prompt.popup("Do you want to open output file?",`   
- 0,"Open Output File",4)   
-  If ($UserInput -eq 6)   
-   {   
-    Invoke-Item "$ExportCSV"   
-   } 
-  }
- }
+.\EnterpriseAppsReport.ps1
