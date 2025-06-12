@@ -1,9 +1,11 @@
+
+#Instel o Modulo Ms Graph antes de executar o Script
+
 #Instalar modulos
 #Install-Module Microsoft.Graph -Scope CurrentUser
 
 #Atualizar GRaph
 #Update-Module Microsoft.Graph
-
 
 # Conectar ao Microsoft Graph
 Connect-MgGraph -Scopes "Application.Read.All", "Application.Read.All"
